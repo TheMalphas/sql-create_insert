@@ -1,0 +1,84 @@
+import openpyxl
+import mysql.connector
+import logging
+from datetime import datetime
+import json
+import os
+
+# Configure logging
+logging.basicConfig(filename='error.log', level=logging.ERROR)
+
+# Function to create SQL insert statements
+def create_insert_sql(tablename, row_data):
+    columns = ', '.join("`" + str(x).replace('/', '_') + "`" for x in row_data.keys())
+    values = ', '.join("'" + str(x).replace('/', '_') + "'" for x in row_data.values())
+    sql = f"INSERT INTO `{tablename}` ({columns}) VALUES ({values})"
+    return sql
+
+try:
+    # Load database configuration from a json file
+    with open('db_config.json', 'r') as f:
+        db_config = json.load(f)
+
+    # Load the columns from a json file
+    with open('columns.json', 'r') as f:
+        columns_data = json.load(f)
+    columns = [c.lower() for c in columns_data['columns']]
+
+    # Look for a file named 'origin.xlsx' in the current directory
+    for file in os.listdir('.'):
+        if file.lower() == 'origin.xlsx':
+            filename = file
+            break
+    else:
+        raise FileNotFoundError("No 'origin.xlsx' file found in the current directory.")
+
+    # Load the workbook
+    wb = openpyxl.load_workbook(filename)
+    sheet = wb.active
+
+    # Get table name from somewhere or hardcode
+    tablename = 'your_table'
+
+    with open('table-name', 'r') as f:
+        tablename = json.load(f)
+
+    # Get the data from Excel
+    excel_data = []
+    for row in sheet.iter_rows(values_only=True):
+        row_data = {sheet.cell(row=1, column=i+1).value.lower(): cell for i, cell in enumerate(row) if sheet.cell(row=1, column=i+1).value.lower() in columns}
+        if row_data:
+            excel_data.append(row_data)
+
+    # Prepare the SQL
+    sql_statements = [create_insert_sql(tablename, row) for row in excel_data]
+
+    # Write the SQL to a text file
+    with open('output.txt', 'w') as f:
+        for sql in sql_statements:
+            f.write(sql + ';\n')
+
+    # Boolean for direct sql insertion
+    execute_directly = False
+
+    # Connect to the by reading the boolean on the sql-insert-check file
+    with open('sql-insert-check.json', 'r') as f:
+        execute_directly = json.load(f)
+
+    # Execute directly
+    if execute_directly:
+        response = input("Are you sure you want to write to the database directly? (yes/no): ")
+        if response.lower() == 'yes':
+            cnx = mysql.connector.connect(**db_config)
+            cursor = cnx.cursor()
+            for sql in sql_statements:
+                cursor.execute(sql)
+            cnx.commit()
+            cursor.close()
+            cnx.close()
+        else:
+            print("Operation cancelled.")
+
+except Exception as e:
+    # If an error occurs, write it to the log file
+    logging.error(f"{datetime.now()}: {type(e).__name__} occurred. {str(e)}")
